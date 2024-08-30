@@ -7,38 +7,27 @@
   (:gen-class))
 
 
-;; Global default values
-(def ^:const port 10000)
-(def ^:const buffer-size 10000)
+(def port 10000)
+(def buffer-size 1024)
+
+;; We store all the client in an atom
 (def clients (atom {}))
 
 
-(defn accept-connection!
-  "Accepts the connection from the client and add the client state to
-  client state atom"
-  [server-channel selector]
-  (let [client (.accept server-channel)]
-    (.configureBlocking client false)
-    (let [key (.register client selector SelectionKey/OP_READ)]
-      (swap! clients assoc client key)
-      (println "New client connected"))))
-
-
-(defn buffer->String
-  "Reads from a buffer and convert to string"
-  [buffer]
-  (String. (.array buffer) 0 (.position buffer) StandardCharsets/UTF_8))
+(defn send-message!
+  [client message]
+  (let [buffer (ByteBuffer/wrap (.getBytes message StandardCharsets/UTF_8))]
+    (.write client buffer)
+    (.flip buffer)))
 
 
 (defn broadcast!
-  "Broadcast a read message from client to all the other connected
-  clients"
   [sender message]
-  (doseq [[client _] @clients]
-    (when (not= client sender)
-      (let [buffer (ByteBuffer/wrap (.getBytes message StandardCharsets/UTF_8))]
-        (.write client buffer)
-        (.flip buffer)))))
+  (let [sender-name (get-in @clients [sender :name])
+        formatted-message (str sender-name ": " message)]
+    (doseq [[client _] @clients]
+      (when (not= client sender)
+        (send-message! client formatted-message)))))
 
 
 (defn handle-client!
@@ -47,12 +36,16 @@
         buffer (ByteBuffer/allocate buffer-size)]
     (try
       (if (> (.read client buffer) 0)
-        (let [message (buffer->String buffer)]
+        (let [message (String. (.array buffer) 0 (.position buffer) StandardCharsets/UTF_8)]
           (println (str "Received: " message))
-          ;; Broadcast to all clients
-          (broadcast! client message))
+          (if-let [name (get-in @clients [client :name])]
+            (broadcast! client (str/trim message))
+            (do
+              (swap! clients assoc-in [client :name] (str/trim message))
+              (println (str "New client named: " (str/trim message)))
+              (send-message! client "Welcome to the chat server! You can now start sending messages."))))
         (do
-          (println "Client disconnected")
+          (println (str "Client " (get-in @clients [client :name]) " disconnected"))
           (swap! clients dissoc client)
           (.cancel key)
           (.close client)))
@@ -63,27 +56,33 @@
         (.close client)))))
 
 
-(defn start-server
-  "Starts a chat server atp the default port, returns nil"
-  [port]
+(defn accept-connection!
+  [server-channel selector]
+  (let [client (.accept server-channel)]
+    (.configureBlocking client false)
+    (let [key (.register client selector SelectionKey/OP_READ)]
+      (swap! clients assoc client {:key key})
+      (println "New client connected")
+      (send-message! client "Welcome! Please enter your name:"))))
+
+
+(defn start-server!
+  []
   (let [selector (Selector/open)
         server-channel (ServerSocketChannel/open)]
     (.configureBlocking server-channel false)
     (.bind (.socket server-channel) (InetSocketAddress. port))
     (.register server-channel selector SelectionKey/OP_ACCEPT)
-    (prn "Chat server started on port: " port)
+    (println (str "Chat server started on port " port))
     (while true
       (when (> (.select selector) 0)
         (let [selected-keys (.selectedKeys selector)]
           (doseq [key selected-keys]
             (cond
-              ;; If the key is acceptable type, then accept connection
               (.isAcceptable key) (accept-connection! server-channel selector)
-              ;; If the key is readable, then read from the client and
-              ;; handle it
               (.isReadable key) (handle-client! key selector)))
           (.clear selected-keys))))))
 
-(defn -main
-  [& args]
-  (start-server port))
+
+(defn -main [& args]
+  (start-server!))
