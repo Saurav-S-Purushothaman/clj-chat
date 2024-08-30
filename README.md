@@ -10,10 +10,17 @@ clj -M -m clj-chat.core
 
 The port is constant and configured to be 10000
 
-To connect to the cleint
-Use any server. In this example, I am using telnet
+To connect to the cleint create a new terminal session and connect on
+localhost 10000.
+In this example, I am using telnet.
+
 
 ``` shell
 telnet localhost 10000
 
 ```
+
+You will be prompted to enter your username, and that would be your
+username for the entire session.
+
+The server can accept multiple connection
