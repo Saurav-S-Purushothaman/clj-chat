@@ -30,6 +30,17 @@
   (String. (.array buffer) 0 (.position buffer) StandardCharsets/UTF_8))
 
 
+(defn broadcast
+  "Broadcast a read message from client to all the other connected
+  clients"
+  [sender message]
+  (doseq [[client _] @clients]
+    (when (not= client sender)
+      (let [buffer (ByteBuffer/wrap (.getBytes message StandardCharsets/UTF_8))]
+        (.write client buffer)
+        (.flip buffer)))))
+
+
 (defn handle-cleint
   [key selector]
   (let [client (.channel key)
@@ -37,7 +48,19 @@
     (try
       (if (> (.read client buffer) 0)
         (let [message (buffer->String buffer)]
-          (println (str "Received: " message)))))))
+          (println (str "Received: " message))
+          ;; Broadcast to all clients
+          (broadcast client message))
+        (do
+          (println "Client disconnected")
+          (swap! clients dissoc client)
+          (.cancel key)
+          (.close client)))
+      (catch Exception e
+        (println (str "Error handling client: " (.getMessage e)))
+        (swap! clients dissoc client)
+        (.cancel key)
+        (.close client)))))
 
 
 (defn start-server
